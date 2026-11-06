@@ -1577,6 +1577,10 @@ yet</strong> (see <a href="#plans-for-improvement">Plans</a>).</td>
 </tr>
 </tbody>
 </table>
+<p>The GitHub repo is public, so the full GEM and BFF datasets are kept
+out of it: <code>.gitignore</code> ignores everything in
+<code>data/</code> except <code>decisions.csv</code>. The source files
+exist only on the local machine.</p>
 <p>The scripts pick the newest file in each folder, using the
 <code>YYYY-MM-DD</code> date in the file name. If a file has no date in
 its name, its modification time is used instead.</p>
@@ -2192,6 +2196,35 @@ cancelled)</td>
 </div>
 <div id="plans-for-improvement" class="section level1">
 <h1>Plans for improvement</h1>
+<div id="done" class="section level2">
+<h2>Done</h2>
+<ul>
+<li><strong>Plant clusters labelled by shape (5 Nov 2026).</strong>
+Checking the 26 Oct data showed that 945 of 976 linked clusters are one
+BFF plant to one GEM location. Units are split differently far more
+often than plants. The old single “cluster spans several plants” issue
+is now four, so real splits can be told apart from likely wrong links
+(see <a href="#step-7-id-issues">Step 7</a>):
+<ul>
+<li>several BFF plants : one GEM location (13): BFF splits by phase or
+owner;</li>
+<li>one BFF plant : several GEM locations (4): GEM splits by block;</li>
+<li>held together by a one-sided link (12): usually a wrong link;</li>
+<li>several : several (2).</li>
+</ul>
+<code>detail</code> shows the shape and any one-sided links, and the tab
+now shows plant names for these rows. Code:
+<code>multi_cluster_issues()</code> in <code>R/pipeline.R</code>.</li>
+<li><strong>Intentional splits can be remembered.</strong> No code
+change was needed: marking a cluster issue <code>agree_to_differ</code>
+/ <code>permanent</code> hides it until an ID joins or leaves the
+cluster.</li>
+<li><strong>Code on GitHub.</strong> The code is at
+<code>github.com/dan-obeirne/GEM-BFF-match</code>. The source datasets
+in <code>data/</code> are kept out of the repo;
+<code>decisions.csv</code> is included.</li>
+</ul>
+</div>
 <div id="planned" class="section level2">
 <h2>Planned</h2>
 <ol style="list-style-type: decimal">
@@ -2241,16 +2274,25 @@ Same decision columns as the other tabs.</li>
 <div id="ideas-to-look-into" class="section level2">
 <h2>Ideas to look into</h2>
 <ul>
-<li><strong>National IDs as a third key.</strong> Check whether GEM
+<li><p><strong>National IDs as a third key.</strong> Check whether GEM
 stores national IDs in “Other IDs”. If it does, use them to confirm or
-suggest links.</li>
-<li><strong>Missing vs different.</strong> A blank on one side is
+suggest links.</p></li>
+<li><p><strong>Missing vs different.</strong> A blank on one side is
 currently counted as a difference. For example, Vlora (AL-2) is flagged
 for technology only because GEM’s is <code>unknown</code>. These could
 be a separate “missing data” flag so they don’t mix with real
-disagreements.</li>
-<li><strong>Move <code>R/</code> into a package</strong> with tests for
-the comparison rules, as the code layout already allows.</li>
+disagreements.</p></li>
+<li><p><strong>Move <code>R/</code> into a package</strong> with tests
+for the comparison rules, as the code layout already allows.</p></li>
+<li><p><strong>One row per wrong link.</strong> A one-sided link in a
+“held together” cluster appears twice on ID issues: once as the cluster
+issue and once as “missing this link”. The two could be merged into one
+row.</p></li>
+<li><p><strong>Act on the 12 “held together” clusters.</strong> Several
+look like wrong links rather than splits, e.g. IE-3 Arklow DUB20 Echelon
+↔︎ Moneypoint, FR-23 Lavera ↔︎ Auguette, and DE-105 ZF SBR linked to both
+Römerbrücke and Südraum. GEM’s H.C. Ørsted and H.C. Ørsted Works may be
+a duplicate location.</p></li>
 </ul>
 </div>
 <div id="further-suggestions" class="section level2">

@@ -41,6 +41,9 @@ Examples below come from the 26 Oct 2026 runs. The main one is **Mellach** in Au
 | | `gasDB_gem_national_ids-<date>.csv` | BFF unit → GEM unit IDs and national IDs. **Not used yet** (see [Plans](#plans-for-improvement)). |
 | `data/` | `decisions.csv` | Every review decision so far. Keep it in git. |
 
+The GitHub repo is public, so the full GEM and BFF datasets are kept out of it: `.gitignore` ignores
+everything in `data/` except `decisions.csv`. The source files exist only on the local machine.
+
 The scripts pick the newest file in each folder, using the `YYYY-MM-DD` date in the file name. If a file has
 no date in its name, its modification time is used instead.
 
@@ -297,6 +300,24 @@ Decisions made in either workbook apply to both scripts.
 
 # Plans for improvement
 
+## Done
+
+- **Plant clusters labelled by shape (5 Nov 2026).** Checking the 26 Oct data showed that 945 of 976 linked
+  clusters are one BFF plant to one GEM location. Units are split differently far more often than plants.
+  The old single "cluster spans several plants" issue is now four, so real splits can be told apart from
+  likely wrong links (see [Step 7](#step-7-id-issues)):
+  - several BFF plants : one GEM location (13): BFF splits by phase or owner;
+  - one BFF plant : several GEM locations (4): GEM splits by block;
+  - held together by a one-sided link (12): usually a wrong link;
+  - several : several (2).
+
+  `detail` shows the shape and any one-sided links, and the tab now shows plant names for these rows. Code:
+  `multi_cluster_issues()` in `R/pipeline.R`.
+- **Intentional splits can be remembered.** No code change was needed: marking a cluster issue
+  `agree_to_differ` / `permanent` hides it until an ID joins or leaves the cluster.
+- **Code on GitHub.** The code is at `github.com/dan-obeirne/GEM-BFF-match`. The source datasets in `data/` are kept out of the repo; `decisions.csv` is
+  included.
+
 ## Planned
 
 1. **Use BFF's GEM-ID file (`gasDB_gem_national_ids`).** Join it to the latest BFF units so each BFF unit
@@ -334,6 +355,12 @@ Decisions made in either workbook apply to both scripts.
   (AL-2) is flagged for technology only because GEM's is `unknown`. These could be a separate "missing data"
   flag so they don't mix with real disagreements.
 - **Move `R/` into a package** with tests for the comparison rules, as the code layout already allows.
+
+- **One row per wrong link.** A one-sided link in a "held together" cluster appears twice on ID issues: once
+  as the cluster issue and once as "missing this link". The two could be merged into one row.
+- **Act on the 12 "held together" clusters.** Several look like wrong links rather than splits, e.g.
+  IE-3 Arklow DUB20 Echelon ↔ Moneypoint, FR-23 Lavera ↔ Auguette, and DE-105 ZF SBR linked to both
+  Römerbrücke and Südraum. GEM's H.C. Ørsted and H.C. Ørsted Works may be a duplicate location.
 
 ## Further suggestions
 
