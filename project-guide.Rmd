@@ -1,0 +1,340 @@
+---
+title: "GEM ↔ BFF comparison: how it works"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = "")
+```
+
+# What this project does
+
+GEM's Global Oil and Gas Plant Tracker (GOGPT) and Beyond Fossil Fuels' gasDB both list gas power plants
+in Europe. This project lines the two up plant by plant and shows where they disagree enough to matter.
+It also remembers review decisions so that an item someone has dismissed doesn't come back on every run.
+
+There are two scripts:
+
+| Script | When to run | What it answers |
+|---|---|---|
+| `full-compare.R` | Any time | "Where do GEM and BFF disagree right now?" |
+| `bff-update.R` | After a new BFF release | "What did BFF just change that GEM doesn't reflect yet?" |
+
+Both write an Excel workbook to `outputs/`. You fill in decisions in that workbook, and the next run reads
+them back in.
+
+Examples below come from the 26 Oct 2026 runs. The main one is **Mellach** in Austria, which is
+**BFF plant AT-11** and **GEM location L100000100047**.
+
+# Input files
+
+| Folder | File | What it contains |
+|---|---|---|
+| `data/gem/` | `GOGPT-all-<date>.csv` | GEM units, one row per unit. Has a GEM unit ID (`G…`), a location ID (`L…`) and an "Other IDs" column that can hold BFF IDs. |
+| `data/bff/` | `gasDB_units-<date>.csv` | BFF units, one row per unit. Unit ID `AT-11-3` means plant `AT-11`, unit 3. Keep older releases here; `bff-update.R` needs the previous one. |
+| `data/bff-gem-source-exchange/` | `bff-to-gem-mapping-<date>.csv` | BFF's list of which GEM IDs each BFF unit corresponds to, plus comments (e.g. "GEM excluded: sub-threshold"). |
+| | `bff-to-gem-notes-<date>.csv` | BFF's changelog: which fields BFF changed on a unit, when, and the source. |
+| | `gasDB_gem_national_ids-<date>.csv` | BFF unit → GEM unit IDs and national IDs. **Not used yet** (see [Plans](#plans-for-improvement)). |
+| `data/` | `decisions.csv` | Every review decision so far. Keep it in git. |
+
+The scripts pick the newest file in each folder, using the `YYYY-MM-DD` date in the file name. If a file has
+no date in its name, its modification time is used instead.
+
+# How a comparison is built
+
+```
+ read & clean  →  link IDs  →  group into plants  →  summarise each plant
+      →  compare GEM vs BFF  →  apply past decisions  →  write workbook
+```
+
+## Step 1: Read and clean (`R/read.R`)
+
+Both files are converted to the same columns (capacity, status, technology, years, coordinates and so on)
+so they can be compared. Along the way:
+
+- **Status** is lower-cased and mapped to a common vocabulary. For example, GEM's
+  `cancelled - inferred 4 y` becomes `cancelled`. Each status is then put in a **status group**.
+  `pre-construction` and `announced` both become `planned`, so GEM `announced` and BFF `pre-construction`
+  count as the same.
+- **Technology** in GEM is mapped to BFF's codes: `combined cycle` → `CCGT`, `gas turbine` → `OCGT`,
+  `steam turbine` → `ST`, and so on. `unknown` (GEM) and `not found` (BFF) become blank.
+- **Country** names are aligned. For example, BFF's `Bosnia & Herzegovina` becomes `Bosnia and Herzegovina`.
+- **Scope:** BFF units with main fuel `biofuel` are dropped. GEM is limited to the countries BFF covers.
+- **Retirement year** uses the actual retirement year if there is one, otherwise the planned one.
+
+## Step 2: Link the IDs (`R/link.R`, `build_links()`)
+
+A link is a claim that a GEM location and a BFF plant are the same plant. Links come from both sides:
+
+| Side | Where it comes from | Example |
+|---|---|---|
+| GEM | GEM's "Other IDs (location)" and "Other IDs (unit)" | `Beyond Fossil Fuels: AT-11-3` on a GEM unit at L100000100047 → link L100000100047 ↔ AT-11 |
+| BFF | The mapping file's GEM location ID, GEM unit ID, and "GEM unit ID in BFF if different" | Row `AL-1-1` → `L100000408827` (Roskovec) → link L100000408827 ↔ AL-1 |
+
+Unit IDs are always reduced to plant and location level (`AT-11-3` → `AT-11`, and a GEM unit → its location).
+Each link is then labelled:
+
+- **both**: GEM and BFF both have the link. This is the healthy case: 962 links on 26 Oct.
+- **gem_only**: only GEM has the link, so BFF's mapping is missing it (19).
+- **bff_only**: only BFF's mapping has the link, so GEM is missing the BFF ID (37).
+- **stale**: the link points at an ID that doesn't exist in the other file, or at a plant that is out of
+  scope, e.g. biofuel (160). Stale links are not used for matching. They go to **ID issues**.
+
+## Step 3: Group into plants (`build_clusters()`)
+
+Most plants match one to one: on 26 Oct, 945 of the 976 linked clusters were one BFF plant and one GEM
+location. Unit splits differ much more often, which is why everything is compared at plant level. A few
+sites are split differently at plant level too:
+
+- **Several BFF plants : one GEM location** (13). BFF often splits a site by phase or owner, e.g. Irsching
+  4/5/6, Keadby 1/2/3, Castejón TotalEnergies/Iberdrola. GEM has one location.
+- **One BFF plant : several GEM locations** (4). GEM splits by block, e.g. Besós 3/4, Aceca 3/4.
+- **Joined only by a one-sided link** (12). If only GEM or only BFF has a link, it is often a wrong link
+  rather than a real split, e.g. Arklow DUB20 Echelon (IE-3) linked to Moneypoint.
+
+So all the linked IDs are joined into **plant clusters**: anything connected by a link, directly or
+through another ID, is one cluster.
+
+> Example: if BFF plant `DE-10` links to GEM `L1` and `L2`, and `L2` also links to `DE-11`, then
+> {DE-10, DE-11, L1, L2} is one cluster.
+
+Each cluster gets a key made of its sorted BFF IDs and GEM IDs: `AT-11 | L100000100047` for Mellach. This key
+is how decisions are remembered between runs. Plants with no link become one-sided clusters, e.g. `AT-3 | `.
+
+## Step 4: Summarise each plant (`R/summarise.R`)
+
+Each side's units are added up into one row per cluster:
+
+| Field | How it is calculated |
+|---|---|
+| capacity | Sum of unit MW, **excluding cancelled** units |
+| status | MW by status group, e.g. `operating 838 \| mothballed 165` |
+| technology | MW by technology, excluding cancelled units |
+| start_year | Earliest–latest start year, excluding cancelled and retired units |
+| retire_year | Earliest–latest retirement year, excluding cancelled units |
+| location | Average of the units' distinct coordinates |
+
+Mellach comes out as:
+
+| | GEM | BFF |
+|---|---|---|
+| capacity | 1084 | 1003 |
+| status | operating 1084 | operating 838 \| mothballed 165 |
+| technology | CCGT 838 \| ST 246 | CCGT 838 \| ST 165 |
+| start_year | 2012–2020 | 1986–2012 |
+
+## Step 5: Compare (`R/compare.R`)
+
+Only clusters with both a GEM side and a BFF side are compared. Each field has its own rule, and all the
+thresholds are in `config.R`.
+
+**Capacity:** flagged if the gap is **more than 20 MW and more than 10%** of the larger value
+(`cap_rule = "and"`).
+
+> Mellach: 1084 vs 1003 → gap 81 MW, 7.5%. More than 20 MW but **not** more than 10%, so it is **not flagged**.
+
+**Status and technology:** these compare the *mix*, not the total. BFF's profile is first scaled to GEM's
+total, so a plant that is simply bigger on one side isn't flagged again here. Then each category is tested
+with the capacity rule.
+
+```{r mix-example}
+gem <- c(CCGT = 838, ST = 246)
+bff <- c(CCGT = 838, ST = 165)
+bff_scaled <- bff * sum(gem) / sum(bff)   # rescale BFF to GEM's 1084 MW
+round(bff_scaled)
+gap <- abs(gem - bff_scaled)
+round(gap)                                 # ST differs by ~68 MW...
+round(gap / pmax(gem, bff_scaled), 2)      # ...which is 28%  -> technology flagged
+```
+
+> Mellach status: BFF has 165 MW `mothballed` and GEM has none, so status is flagged too.
+
+**Start and retirement years:** flagged when either end of the range differs by **more than 1 year**.
+
+> Mellach: 2012–2020 vs 1986–2012 → flagged.
+
+If only one side has a year, `one_sided_years = "gem_missing"` means it is flagged only when **BFF has a year
+and GEM doesn't**.
+
+**Location:** flagged when the two plant centres are **more than 2 km** apart.
+
+So Mellach appears on **Divergences** with `flags = status, technology, start_year`, and those cells are
+highlighted. On 26 Oct there were 418 plants on that tab.
+
+## Step 6: Plants with no match
+
+Clusters that exist on only one side go to **BFF-only plants** or **GEM-only plants**. Two things are added
+to each:
+
+1. **BFF's mapping comment.** If it matches `explained_comment_regex` (e.g. "sub-threshold", "before 2023",
+   "excluded: retired"), the plant is considered explained. It moves to **Explained absences**, which is
+   for information only.
+   Other comments, like "We found different information", stay visible next to the plant.
+2. **A suggested match** (`suggest_links()`). It looks for a plant in the same country on the other side.
+   Names are cleaned first: lower-cased, accents removed, and words like "power station", "CHP" and "gas"
+   dropped. Then:
+   - Within 5 km, it picks the most similar name. That is **strong** if similarity ≥ 0.6, otherwise
+     **nearby, different name**.
+   - If nothing is within 5 km, it offers a name with similarity ≥ 0.9 anywhere in the country
+     (**similar name, far or no coordinates**).
+
+> Example: BFF **Trebovice** (CZ-21) → suggested GEM **Trebovice power station**, 0 km → *strong*.
+> If that's right, the fix is to add `CZ-21` to GEM's Other IDs. Next run it becomes a matched plant.
+
+## Step 7: ID issues
+
+All the problems with the IDs themselves are collected on one tab:
+
+| Issue | What to do |
+|---|---|
+| GEM is missing this BFF ID (link only in BFF mapping) | Add the BFF ID to GEM |
+| BFF mapping is missing this link (link only in GEM) | Tell BFF, or check GEM's link is right |
+| BFF links a GEM ID that is not in the GEM file | The GEM ID was probably merged or deleted; tell BFF the current one |
+| GEM links a BFF plant ID that is not in the BFF file | BFF removed or renumbered the plant; fix GEM's Other IDs |
+| … outside scope (excluded fuel) | Usually fine. The plant is biofuel in BFF |
+| Several BFF plants share one GEM location (check BFF split is intentional) | Usually fine. Once checked, mark `agree_to_differ` / `permanent` |
+| One BFF plant covers several GEM locations (check GEM split is intentional) | Check GEM hasn't duplicated the plant; if not, `agree_to_differ` / `permanent` |
+| Plant cluster held together by a link only one side has (check the link) | Often a wrong link. `detail` lists the one-sided link(s); remove the wrong one on whichever side has it |
+| Several BFF plants and GEM locations in one cluster (check the links) | Check each link; usually two plants on the same site |
+
+For cluster issues, `detail` gives the shape, e.g. `2 BFF : 1 GEM`. The item key lists every ID in the
+cluster, so a decision holds until an ID joins or leaves the cluster, and then the issue comes back. A
+one-sided link in a "held together" cluster also appears on its own as a "missing this link" row. Fixing the
+link clears both.
+
+## Step 8: Decisions (`R/decisions.R`)
+
+Every review tab has `decision`, `scope`, `apply_to` and `notes` columns.
+
+| decision | Meaning | Hidden next time? |
+|---|---|---|
+| `agree_to_differ` | A real difference we're keeping | Yes |
+| `gem_updated` | GEM has been changed to match | Yes |
+| `bff_likely_wrong` | Worth telling BFF | Yes |
+| `investigate` | Still open | No, shown as "investigating" |
+
+| scope | Meaning |
+|---|---|
+| `until_changed` (default) | Hidden while both values stay within the thresholds of what you reviewed |
+| `permanent` | Never flag this field for this plant again |
+
+Each workbook records the values it showed in a hidden `_values` sheet. That's what makes `until_changed`
+work:
+
+> You mark Mellach's `technology` as `agree_to_differ` while GEM is `CCGT 838 | ST 246` and BFF is
+> `CCGT 838 | ST 165`.
+>
+> - GEM later changes ST to 250 MW: still within the thresholds, so it **stays hidden**.
+> - BFF later changes ST to 0: a real change, so it **comes back** as "values changed since review",
+>   with your old note shown.
+
+`apply_to` limits a decision to some of a row's flags. For example, `status` decides only status for
+Mellach and leaves technology and start_year open.
+
+On each run, decisions are read from **every** workbook in `outputs/` into `data/decisions.csv`. If one
+workbook is edited, its decisions replace the earlier ones from that workbook. For each item, the most
+recent decision wins. Hidden items are listed on the **Reviewed** tab, where they can be re-decided.
+
+# Outputs
+
+## `full-compare.R` → `outputs/full-compare-<timestamp>.xlsx`
+
+| Tab | Contents | 26 Oct |
+|---|---|---|
+| Summary | Files used, rows per tab, flags by country, link coverage, settings | |
+| Divergences | Matched plants with at least one flagged field, side by side, plus BFF's latest note and sources | 418 |
+| BFF-only plants | BFF plants with no GEM link, plus suggested match and BFF comment | 40 |
+| GEM-only plants | GEM locations with no BFF link, plus suggested match and BFF comment | 169 |
+| ID issues | See Step 7 | 247 |
+| Explained absences | Unmatched plants BFF's comments already explain | 68 |
+| Reviewed | Items hidden by decisions | |
+
+## `bff-update.R` → `outputs/bff-update-<timestamp>.xlsx`
+
+This script compares the **newest** BFF release with the **previous** one, then keeps only the changes GEM
+doesn't reflect yet.
+
+1. **What BFF changed.** The cutoff is the latest `Last update` in the previous release (27 Apr 2026). Units
+   updated after the cutoff count as **changed**. IDs only in the new release are **new**, and IDs only in
+   the old release are **removed**. For changed units, the key fields are compared release to release to
+   say what changed.
+   On 26 Oct: 361 changed, 38 new, 45 removed.
+2. **Does it matter to GEM?** The full comparison is run twice, against the new release and against the
+   previous one. A divergence is kept only if:
+   - it is in a field BFF changed (a status change can affect status and capacity), **and**
+   - it is new in this release, or BFF's value is different from last time.
+
+   So older disagreements that BFF didn't touch don't fill this workbook.
+
+> Mellach: BFF changed unit AT-11-3 `status: operating -> mothballed; technology: OCGT -> ST;
+> start_year: 2020 -> 1986`. GEM still differs on all three, so it is listed with that change text in
+> `bff_fields_changed`.
+
+| Tab | Contents | 26 Oct |
+|---|---|---|
+| Divergences | Plants where BFF's change created or moved a divergence | 71 |
+| New BFF plants | New BFF plants that aren't linked to GEM and aren't explained | 16 |
+| Removed BFF units | Units BFF dropped that GEM still has as active (not retired or cancelled) | 17 |
+
+Decisions made in either workbook apply to both scripts.
+
+# Settings (`config.R`)
+
+| Setting | Default | Effect |
+|---|---|---|
+| `cap_pct`, `cap_abs_mw`, `cap_rule` | 10%, 20 MW, "and" | When a capacity (or status/technology) gap counts |
+| `max_dist_km` | 2 | Location flag distance |
+| `year_tol` | 1 | Year difference allowed |
+| `one_sided_years` | "gem_missing" | What to do when only one side has a year |
+| `exclude_bff_fuels` | biofuel | BFF fuels left out |
+| `suggest_link_km`, `suggest_name_sim` | 5 km, 0.6 | Match suggestion search radius and "strong" name similarity |
+| `explained_comment_regex` | see file | Which BFF comments count as explained |
+| `gem_status_map`, `status_groups`, `gem_tech_map`, `country_map` | see file | Vocabulary alignment |
+
+# Plans for improvement
+
+## Planned
+
+1. **Use BFF's GEM-ID file (`gasDB_gem_national_ids`).** Join it to the latest BFF units so each BFF unit
+   has the GEM unit IDs BFF itself assigns. Compared with the 26 Oct files:
+   - It covers 2,005 of 2,037 units.
+   - 1,866 units have the same GEM IDs as the mapping file and 101 differ.
+   - 38 of its GEM IDs aren't in GEM's file.
+2. **Restrict file picking.** In `data/bff/`, read only `gasDB_units-*.csv`, so a stray file can't be taken
+   for the latest release.
+3. **Unit-level matching in both directions.** Compare each GEM unit's BFF ID with each BFF unit's GEM ID and
+   label every pair **agree / one-sided / conflict / stale**. Build plant clusters from agreeing and
+   one-sided links. Send conflicts to review instead of merging plants. Flag divergences only after this
+   step.
+4. **ID reconciliation tab.** One row per fix, saying who needs to act. For example:
+   - "GEM unit G… should add BFF ID AT-11-3"
+   - "BFF lists G…, which no longer exists"
+   - "Mapping file and BFF release disagree for unit X"
+
+   The aim is to raise the share of links that **both** sides agree on.
+5. **Unit-level match suggestions.** For unlinked units inside an already-matched plant, suggest the
+   matching unit from unit name, capacity and distance, so the strong ones can be accepted in bulk.
+6. **"BFF suggestions" tab.** At the moment BFF's notes, with their sources, only appear when a plant is
+   already flagged. Instead, list every note, and every mapping comment that asks GEM for a correction, with
+   a status:
+   - **GEM already reflects this**: the values now match, or GEM was updated after the note.
+   - **Still differs**: shown with BFF's source.
+
+   Same decision columns as the other tabs.
+
+## Ideas to look into
+
+- **National IDs as a third key.** Check whether GEM stores national IDs in "Other IDs". If it does, use
+  them to confirm or suggest links.
+- **Missing vs different.** A blank on one side is currently counted as a difference. For example, Vlora
+  (AL-2) is flagged for technology only because GEM's is `unknown`. These could be a separate "missing data"
+  flag so they don't mix with real disagreements.
+- **Move `R/` into a package** with tests for the comparison rules, as the code layout already allows.
+
+## Further suggestions
+
+- *(add here)*
