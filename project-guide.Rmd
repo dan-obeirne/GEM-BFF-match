@@ -285,6 +285,25 @@ doesn't reflect yet.
 
 Decisions made in either workbook apply to both scripts.
 
+## `researcher-export.R` → `outputs/bffcompare_<YYYYMMDD>.csv`
+
+A CSV for the GOGPT researcher repo, in the layout that repo's output spec asks for: one row per finding.
+Each row becomes a research task there, so BFF's value is treated as a lead to check, not a fact.
+
+- **disagreement**: a flagged field on a matched plant. Rows are at unit level wherever units pair up.
+  Several BFF units against one GEM unit (usually a combined-cycle block BFF splits into turbines) are
+  added up. Otherwise the row is at plant level, `gem_unit_id` is blank, and `note` says which units it
+  covers. `field` is the GEM export column header.
+- **lead**: a BFF-only plant above 20 MW (EU/UK) or 50 MW (elsewhere), or a BFF unit with no GEM unit
+  inside a plant whose capacity differs. Plants BFF says GEM excluded on purpose are left out.
+
+Only findings `full-compare.R` would show are exported. Anything dismissed by a decision is left out.
+Low-confidence matches (clusters held together by a one-sided link) are kept only for status changes or
+capacity gaps over 20%. `note` carries BFF's changelog source where there is one. Rows whose only cited
+source is GEM itself or abarrelfull are dropped. Settings are under "Researcher export" in `config.R`.
+
+On 5 Nov 2026 it wrote 781 rows: 727 disagreements on 366 plants and 54 leads.
+
 # Settings (`config.R`)
 
 | Setting | Default | Effect |

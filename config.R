@@ -53,6 +53,22 @@ cfg <- list(
     sep = "|"
   ),
 
+  # ---- Researcher export (researcher-export.R) --------------------------------
+  researcher_tool_name   = "bffcompare",   # file name: <tool>_<YYYYMMDD>.csv
+  researcher_source_name = "Beyond Fossil Fuels gasDB",
+  # Plant leads below this generating capacity are left out (unless capacity is unknown)
+  researcher_lead_mw     = 50,
+  researcher_lead_mw_eu  = 20,             # ... in EU countries and the UK
+  researcher_eu_uk = c(
+    "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czech Republic", "Denmark", "Estonia",
+    "Finland", "France", "Germany", "Greece", "Hungary", "Ireland", "Italy", "Latvia", "Lithuania",
+    "Luxembourg", "Malta", "Netherlands", "Poland", "Portugal", "Romania", "Slovakia", "Slovenia",
+    "Spain", "Sweden", "United Kingdom"
+  ),
+  # Sources that aren't independent of GEM (or are banned). A finding whose BFF
+  # changelog cites only these is left out.
+  researcher_dependent_sources = "gem\\.wiki|globalenergymonitor\\.org|abarrelfull",
+
   # ---- Vocabulary maps -------------------------------------------------------
   # GEM status -> common status
   gem_status_map = c(
