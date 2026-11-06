@@ -358,6 +358,74 @@ display: none;
 whole-plant level</strong>, flags only significant differences, and
 remembers review decisions so dismissed items don’t keep coming
 back.</p>
+<p>For how the comparison works, see <code>project-guide.html</code>
+(open it in a browser).</p>
+<div id="quick-start-first-time" class="section level2">
+<h2>Quick start (first time)</h2>
+<p>You need R (4.3 or later) and git. You don’t need RStudio: everything
+below runs in a terminal.</p>
+<p><strong>1. Get the code</strong></p>
+<pre class="sh"><code>git clone https://github.com/dan-obeirne/GEM-BFF-match.git
+cd GEM-BFF-match</code></pre>
+<p><strong>2. Install the R packages</strong> (once):</p>
+<pre class="sh"><code>Rscript -e &#39;install.packages(c(&quot;tidyverse&quot;, &quot;janitor&quot;, &quot;openxlsx&quot;, &quot;geosphere&quot;, &quot;stringdist&quot;, &quot;rmarkdown&quot;))&#39;</code></pre>
+<p><strong>3. Add the data.</strong> The data files aren’t in the repo,
+so make the folders and put the latest files in them:</p>
+<pre class="sh"><code>mkdir -p data/gem data/bff data/bff-gem-source-exchange</code></pre>
+<table>
+<colgroup>
+<col width="33%" />
+<col width="33%" />
+<col width="33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Folder</th>
+<th>File</th>
+<th>Where to get it</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>data/gem/</code></td>
+<td>GOGPT all-units export,
+e.g. <code>GOGPT-all-2026-10-26T222507.csv</code></td>
+<td>GEM’s GOGPT database: export all units as CSV</td>
+</tr>
+<tr class="even">
+<td><code>data/bff/</code></td>
+<td>BFF gasDB units download, named
+<code>gasDB_units-YYYY-MM-DD.csv</code></td>
+<td>BFF’s gasDB data browser. Keep the previous release here too,
+because <code>bff-update.R</code> compares the two newest.</td>
+</tr>
+<tr class="odd">
+<td><code>data/bff-gem-source-exchange/</code></td>
+<td><code>bff-to-gem-mapping-YYYY-MM-DD.csv</code>,
+<code>bff-to-gem-notes-YYYY-MM-DD.csv</code></td>
+<td>Exchanged with BFF; export each tab as CSV</td>
+</tr>
+</tbody>
+</table>
+<p>Every file name must contain its date as <code>YYYY-MM-DD</code>,
+because the scripts pick the newest file in each folder by that date.
+Rename downloads if needed. <code>data/decisions.csv</code> (the review
+history) is already in the repo.</p>
+<p><strong>4. Run</strong> from the project folder:</p>
+<pre class="sh"><code>Rscript full-compare.R        # full comparison           -&gt; outputs/full-compare-&lt;timestamp&gt;.xlsx
+Rscript bff-update.R          # after a new BFF release   -&gt; outputs/bff-update-&lt;timestamp&gt;.xlsx
+Rscript researcher-export.R   # for the researcher repo   -&gt; outputs/bffcompare_&lt;YYYYMMDD&gt;.csv
+open outputs                  # open the folder in Finder (macOS)</code></pre>
+<p>Each takes under a minute. <code>outputs/</code> isn’t in git.</p>
+<p><strong>5. Review and share decisions.</strong> Fill in decisions in
+a workbook (see below) and run any script again. The decisions are
+copied into <code>data/decisions.csv</code>. Commit and push that file
+so others get them:</p>
+<pre class="sh"><code>git pull                      # get others&#39; decisions first
+git add data/decisions.csv
+git commit -m &quot;Review decisions&quot;
+git push</code></pre>
+</div>
 <div id="data" class="section level2">
 <h2>Data</h2>
 <table>
@@ -418,6 +486,16 @@ release → <code>outputs/bff-update-&lt;timestamp&gt;.xlsx</code>
 <li>It keeps only changes that GEM’s latest data doesn’t already
 reflect.</li>
 <li>Each row shows what BFF changed and BFF’s sources.</li>
+</ul></li>
+<li><strong><code>researcher-export.R</code></strong>: findings for the
+GOGPT researcher repo →
+<code>outputs/bffcompare_&lt;YYYYMMDD&gt;.csv</code>
+<ul>
+<li>It writes one row per finding: a <strong>disagreement</strong> (a
+field where GEM and BFF differ) or a <strong>lead</strong> (a plant or
+unit BFF has and GEM seems not to).</li>
+<li>It exports only what <code>full-compare.R</code> flags and no
+decision has dismissed.</li>
 </ul></li>
 </ul>
 <p>Run them from this folder: <code>Rscript full-compare.R</code>, or
